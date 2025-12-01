@@ -9,6 +9,9 @@ import {
 const MODEL_NAME = "gemini-2.5-flash";
 const INFO_FILE_YEARS = [2016, 2017, 2018, 2019, 2020, 2021, 2022];
 
+const safeStringify = (value) =>
+  JSON.stringify(value, (_, v) => (typeof v === "bigint" ? v.toString() : v));
+
 async function fetchInfoFileParts(ai, loadedYears = []) {
   const targetYears = INFO_FILE_YEARS.filter((year) =>
     loadedYears.includes(year)
@@ -52,7 +55,7 @@ export async function generateSqlAndExplanation({
     sampleRows && sampleRows.length
       ? sampleRows
           .slice(0, 6)
-          .map((row, idx) => `${idx + 1}. ${JSON.stringify(row)}`)
+          .map((row, idx) => `${idx + 1}. ${safeStringify(row)}`)
           .join("\n")
       : "Sample rows not provided.";
 
