@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import NavTabs from "./components/NavTabs";
 import { initDuckDB, loadCsv, runDuckQuery } from "./lib/duckdbClient";
 import { draftSql } from "./lib/sqlexplorerGeminiClient";
+import { SAMPLE_QUERIES } from "./lib/sampleQueries";
 
 const YEARS = [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023];
 
@@ -16,6 +17,7 @@ export default function SqlExplorerV2() {
     "Create a profile of the latest BRFSS year."
   );
   const [sql, setSql] = useState("");
+  const [sqlFlash, setSqlFlash] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState("");
@@ -23,10 +25,14 @@ export default function SqlExplorerV2() {
   const [tableMeta, setTableMeta] = useState({});
   const [queryResult, setQueryResult] = useState(null);
   const [uploadingYear, setUploadingYear] = useState(null);
+  const [selectedSample, setSelectedSample] = useState("");
+  const [showSampleModal, setShowSampleModal] = useState(false);
+  const [sampleModalMessage, setSampleModalMessage] = useState("");
 
   const dbRef = useRef(null);
   const connRef = useRef(null);
   const workerUrlRef = useRef(null);
+  const sqlFlashTimeoutRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,6 +59,9 @@ export default function SqlExplorerV2() {
       dbRef.current?.terminate?.();
       if (workerUrlRef.current) {
         URL.revokeObjectURL(workerUrlRef.current);
+      }
+      if (sqlFlashTimeoutRef.current) {
+        clearTimeout(sqlFlashTimeoutRef.current);
       }
     };
   }, []);
@@ -104,6 +113,14 @@ export default function SqlExplorerV2() {
     }
   };
 
+  const triggerSqlFlash = () => {
+    setSqlFlash(true);
+    if (sqlFlashTimeoutRef.current) {
+      clearTimeout(sqlFlashTimeoutRef.current);
+    }
+    sqlFlashTimeoutRef.current = setTimeout(() => setSqlFlash(false), 600);
+  };
+
   const handleDraftSql = async () => {
     if (!geminiKey.trim()) {
       setError("Add a Gemini API key first.");
@@ -121,6 +138,7 @@ export default function SqlExplorerV2() {
         sampleRows,
       });
       setSql(drafted);
+      triggerSqlFlash();
       setMessage("Gemini drafted SQL for you.");
     } catch (err) {
       console.error(err);
@@ -130,12 +148,13 @@ export default function SqlExplorerV2() {
     }
   };
 
-  const runQuery = async () => {
+  const runQuery = async (sqlOverride) => {
     if (!connRef.current) {
       setError("DuckDB has not finished loading yet.");
       return;
     }
-    if (!sql.trim()) {
+    const statement = (sqlOverride ?? sql).trim();
+    if (!statement) {
       setError("Add SQL to run.");
       return;
     }
@@ -144,7 +163,7 @@ export default function SqlExplorerV2() {
     setMessage("");
     setQueryResult(null);
     try {
-      const result = await runDuckQuery(connRef.current, sql);
+      const result = await runDuckQuery(connRef.current, statement);
       setQueryResult(result);
       setMessage(
         `Query returned ${result.rows.length} row${
@@ -157,6 +176,31 @@ export default function SqlExplorerV2() {
     } finally {
       setRunning(false);
     }
+  };
+
+  const handleSampleSelect = async (id) => {
+    setSelectedSample(id);
+    const sample = SAMPLE_QUERIES.find((q) => q.id === id);
+    if (!sample) return;
+
+    const missing = (sample.requiredYears || []).filter(
+      (year) => !loadedYears.includes(year)
+    );
+    if (missing.length) {
+      setSampleModalMessage(
+        `Please upload CSVs for ${missing.join(
+          ", "
+        )} to run this sample query.`
+      );
+      setShowSampleModal(true);
+      setSelectedSample("");
+      return;
+    }
+
+    setPrompt(sample.prompt);
+    setSql(sample.sql);
+    triggerSqlFlash();
+    await runQuery(sample.sql);
   };
 
   return (
@@ -196,11 +240,11 @@ export default function SqlExplorerV2() {
 
         <section className="grid gap-6 lg:grid-cols-3">
           <div className="rounded-2xl border border-amber-200 bg-white/80 p-5 shadow-lg shadow-amber-100/60">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-amber-700">
-                  Natural language
-                </p>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-amber-700">
+                Natural language
+              </p>
                 <h3 className="text-lg font-semibold text-stone-900">Ask Gemini</h3>
               </div>
               <span className="rounded-full bg-stone-900 px-3 py-1 text-[11px] font-semibold text-amber-50">
@@ -224,6 +268,26 @@ export default function SqlExplorerV2() {
             <p className="mt-2 text-xs text-stone-600">
               Uses your Gemini API key. Returns SQL directly into the editor.
             </p>
+            <div className="mt-4 space-y-1">
+              <label className="text-xs uppercase tracking-[0.2em] text-amber-700">
+                Sample queries
+              </label>
+              <select
+                value={selectedSample}
+                onChange={(e) => handleSampleSelect(e.target.value)}
+                className="w-full rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/30"
+              >
+                <option value="">Choose a sample query...</option>
+                {SAMPLE_QUERIES.map((sample) => (
+                  <option key={sample.id} value={sample.id}>
+                    {sample.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-stone-500">
+                Selecting a sample fills the SQL editor and runs it immediately.
+              </p>
+            </div>
           </div>
 
           <div className="lg:col-span-2">
@@ -238,7 +302,7 @@ export default function SqlExplorerV2() {
                   </h3>
                 </div>
                 <button
-                  onClick={runQuery}
+                  onClick={() => runQuery()}
                   disabled={running}
                   className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-semibold text-amber-50 transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300 disabled:text-stone-500"
                 >
@@ -249,7 +313,9 @@ export default function SqlExplorerV2() {
                 value={sql}
                 onChange={(e) => setSql(e.target.value)}
                 rows={14}
-                className="mt-3 w-full rounded-xl border border-amber-200 bg-white px-4 py-3 font-mono text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/30"
+                className={`mt-3 w-full rounded-xl border border-amber-200 bg-white px-4 py-3 font-mono text-sm text-stone-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/30 ${
+                  sqlFlash ? "sql-flash" : ""
+                }`}
                 placeholder="SELECT * FROM brfss_2016 LIMIT 25;"
               />
               <div className="mt-2 text-xs text-stone-600">
@@ -409,6 +475,37 @@ export default function SqlExplorerV2() {
                   ? loadedYears.map((year) => `brfss_${year}`).join(", ")
                   : "none yet"}
                 .
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showSampleModal && (
+          <div className="fixed inset-0 z-30 flex items-center justify-center bg-stone-900/40 px-4">
+            <div className="w-full max-w-md rounded-2xl border border-amber-200 bg-white p-6 shadow-xl">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-stone-900">Upload required files</h3>
+                <button
+                  onClick={() => setShowSampleModal(false)}
+                  className="rounded-full bg-stone-900 px-3 py-1 text-xs font-semibold text-amber-50"
+                >
+                  Close
+                </button>
+              </div>
+              <p className="mt-3 text-sm text-stone-700">
+                {sampleModalMessage ||
+                  "Please upload the required CSVs to run this sample query."}
+              </p>
+              <div className="mt-4 flex justify-end">
+                <button
+                  onClick={() => {
+                    setShowSampleModal(false);
+                    setShowFilesModal(true);
+                  }}
+                  className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-500"
+                >
+                  Open file uploader
+                </button>
               </div>
             </div>
           </div>

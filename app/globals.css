@@ -24,3 +24,18 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@keyframes sql-flash {
+  0% {
+    color: #92400e;
+    background-color: #fef9c3;
+  }
+  100% {
+    color: #171717;
+    background-color: transparent;
+  }
+}
+
+.sql-flash {
+  animation: sql-flash 0.6s ease;
+}
