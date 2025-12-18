@@ -319,9 +319,6 @@ export default function SqlExplorerV2() {
               </p>
                 <h3 className="text-lg font-semibold text-stone-900">Ask Gemini</h3>
               </div>
-              <span className="rounded-full bg-stone-900 px-3 py-1 text-[11px] font-semibold text-amber-50">
-                SQL only
-              </span>
             </div>
             <textarea
               value={prompt}
